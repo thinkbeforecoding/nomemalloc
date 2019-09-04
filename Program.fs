@@ -113,7 +113,6 @@ module Context =
     open System.Runtime.Intrinsics.X86
     let copy size (ctx: Context inref) =
         let source = (cast ctx.Source).Slice(0,size)
-        
         source.CopyTo(ctx.Dest)
         { Source = ctx.Source.Slice(size*2)
           Dest = ctx.Dest.Slice(size) }
@@ -148,7 +147,7 @@ module Context =
     let inline skip src dest (ctx: Context inref) =
         { Source = ctx.Source.Slice(src)
           Dest = ctx.Dest.Slice(dest) }
-
+    
 let renderPacket (ctx: Context inref) =
     let r =  Context.readSByte &ctx
     let sizeCount = r.Value
@@ -179,19 +178,14 @@ let rec renderLines height (ctx: Context inref) =
     else
         ctx
 
-let inline renderBRUN height (ctx: Context inref) =
-    renderLines height &ctx
+// let inline renderBRUN height (ctx: Context inref) =
+//     renderLines height &ctx
 
 
 let renderSSHPacket (ctx: Context inref) =
-    // let r = Context.readByte &ctx
-    // let skipx = int r.Value
-    // let r = Context.readSByte &r.Ctx
-    // let sizeCount = r.Value
-    // let ctx = Context.skip 0 skipx &r.Ctx
     let skipx = int ctx.Source.[0]
     let sizeCount = sbyte ctx.Source.[1]
-    let ctx = { Source = ctx.Source.Slice(2);  Dest = ctx.Dest.Slice(skipx) }
+    let ctx = Context.skip 2 skipx &ctx
     if sizeCount >= 0y then
         let size = int sizeCount
         Context.copy size &ctx
@@ -217,7 +211,8 @@ let renderSSHLine width (ctx: Context inref) =
             struct(0, int v, 2)
     let dst = Context.skip offset (skipy * width) &ctx
     let next = renderSSHPackets pakets &dst 
-    { Context.skip 0 width &dst with Source = next.Source }
+    { Dest = ctx.Dest.Slice(width) 
+      Source = next.Source }
 
 let rec renderSSHLines width count (ctx: Context inref) =
     if count > 0 then
@@ -249,7 +244,7 @@ let render (header: Header) initialView =
                     Dest = m.Span }
         let __ =
             match chunkType with
-            | ChunkType.Rle -> renderBRUN (int header.Height) &ctx
+            | ChunkType.Rle -> renderLines (int header.Height) &ctx
             | ChunkType.Delta -> renderSSH (int header.Width) &ctx
             | _ -> ctx
 
