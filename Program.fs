@@ -96,96 +96,78 @@ type ChunkHeader = {
 
 [<Struct; IsByRefLike>]
 type Context =
-    { Source: byte ReadOnlySpan
-      Dest: uint16 Span }
-
-
-[<Struct; IsByRefLike>]
-type RefTuple<'l> =
-    { Value: 'l
-      Ctx: Context }
-
-module RefTuple =
-    let inline make l ctx = { Value = l; Ctx = ctx}
-
+    { mutable Source: byte ReadOnlySpan
+      mutable Dest: uint16 Span }
 
 module Context =
     open System.Runtime.Intrinsics.X86
-    let copy size (ctx: Context inref) =
+    let copy size (ctx: Context byref) =
         let source = (cast ctx.Source).Slice(0,size)
         source.CopyTo(ctx.Dest)
-        { Source = ctx.Source.Slice(size*2)
-          Dest = ctx.Dest.Slice(size) }
+        ctx.Source <- ctx.Source.Slice(size*2)
+        ctx.Dest <- ctx.Dest.Slice(size)
 
-    let fill size (ctx: Context inref) =
+    let fill size (ctx: Context byref) =
         let color = uint16 (BinaryPrimitives.ReadInt16LittleEndian ctx.Source)
         let dest = ctx.Dest.Slice(0,size)
         dest.Fill(color)
-        { Source = ctx.Source.Slice(2)
-          Dest = ctx.Dest.Slice(size)}
+        ctx.Source <- ctx.Source.Slice(2)
+        ctx.Dest <- ctx.Dest.Slice(size)
         
-    let inline readSByte (ctx: Context inref) =
-        RefTuple.make 
-            (sbyte ctx.Source.[0])
-            { ctx with Source = ctx.Source.Slice(1) }
+    let inline readSByte (ctx: Context byref) =
+        let v = sbyte ctx.Source.[0]
+        ctx.Source <- ctx.Source.Slice(1)
+        v
 
-    let inline readByte (ctx: Context inref) =
-        RefTuple.make
-            (byte ctx.Source.[0])
-            { ctx with Source = ctx.Source.Slice(1)  }
+    let inline readByte (ctx: Context byref) =
+        let v =    (byte ctx.Source.[0])
+        ctx.Source <- ctx.Source.Slice(1)
+        v
 
-    let inline readUInt16 (ctx: Context inref) =
-        RefTuple.make
-            (uint16 (BinaryPrimitives.ReadInt16LittleEndian ctx.Source))
-            { ctx with Source = ctx.Source.Slice(2)  }
+    let inline readUInt16 (ctx: Context byref) =
+        let v = (uint16 (BinaryPrimitives.ReadInt16LittleEndian ctx.Source))
+        ctx.Source <- ctx.Source.Slice(2)
+        v
 
-    let inline readInt16 (ctx: Context inref) =
-        RefTuple.make
-            (BinaryPrimitives.ReadInt16LittleEndian ctx.Source)
-            { ctx with Source = ctx.Source.Slice(2)  }
+    let inline readInt16 (ctx: Context byref) =
+        let v = BinaryPrimitives.ReadInt16LittleEndian ctx.Source
+        ctx.Source <- ctx.Source.Slice(2)
+        v
 
-    let inline skip src dest (ctx: Context inref) =
-        { Source = ctx.Source.Slice(src)
-          Dest = ctx.Dest.Slice(dest) }
+    let inline skip src dest (ctx: Context byref) =
+        ctx.Source <- ctx.Source.Slice(src)
+        ctx.Dest <- ctx.Dest.Slice(dest)
     
-let renderPacket (ctx: Context inref) =
-    let r =  Context.readSByte &ctx
-    let sizeCount = r.Value
+let renderPacket (ctx: Context byref) =
+    let sizeCount = Context.readSByte &ctx
     if sizeCount < 0y then
         let size = int (-sizeCount)
-        Context.copy size &r.Ctx
+        Context.copy size &ctx
     else
         let count = int sizeCount
-        Context.fill count &r.Ctx
+        Context.fill count &ctx
 
 
-let rec renderPackets packets (ctx: Context inref) =
+let rec renderPackets packets (ctx: Context byref) =
     if packets > 0 then
-        let ctx' = renderPacket &ctx
-        renderPackets (packets-1) &ctx'
-    else
-        ctx
+        renderPacket &ctx
+        renderPackets (packets-1) &ctx
 
-let renderLine (ctx: Context inref) =
-   let r = Context.readByte &ctx
-   let packets = int r.Value
-   renderPackets packets &r.Ctx
+let renderLine (ctx: Context byref) =
+   let packets = int (Context.readByte &ctx)
+   renderPackets packets &ctx
 
-let rec renderLines height (ctx: Context inref) =
+let rec renderLines height (ctx: Context byref) =
     if height > 0 then
-        let ctx' = renderLine &ctx
-        renderLines (height-1) &ctx'
-    else
-        ctx
-
-// let inline renderBRUN height (ctx: Context inref) =
-//     renderLines height &ctx
+        renderLine &ctx
+        renderLines (height-1) &ctx
 
 
-let renderSSHPacket (ctx: Context inref) =
+
+let renderSSHPacket (ctx: Context byref) =
     let skipx = int ctx.Source.[0]
     let sizeCount = sbyte ctx.Source.[1]
-    let ctx = Context.skip 2 skipx &ctx
+    Context.skip 2 skipx &ctx
     if sizeCount >= 0y then
         let size = int sizeCount
         Context.copy size &ctx
@@ -193,38 +175,32 @@ let renderSSHPacket (ctx: Context inref) =
         let count = int -sizeCount
         Context.fill count &ctx
 
-let rec renderSSHPackets count (ctx: Context inref) =
+let rec renderSSHPackets count (ctx: Context byref) =
     if count > 0 then
-        let ctx' =  renderSSHPacket &ctx
-        renderSSHPackets (count-1) &ctx'
-    else
-        ctx
+        renderSSHPacket &ctx
+        renderSSHPackets (count-1) &ctx
 
-let renderSSHLine width (ctx: Context inref) =
-    let struct(skipy, pakets, offset) =
-        let r = Context.readInt16 &ctx
-        let v = r.Value
+let renderSSHLine width (ctx: Context byref) =
+    let struct(skipy, pakets) =
+        let v = Context.readInt16 &ctx
         if v &&& 0xC000s <> 0s then
-            let r' = Context.readUInt16 &r.Ctx
-            struct(int (-v), int r'.Value, 4)
+            let v' = Context.readUInt16 &ctx
+            struct(int (-v), int v')
         else
-            struct(0, int v, 2)
-    let dst = Context.skip offset (skipy * width) &ctx
-    let next = renderSSHPackets pakets &dst 
-    { Dest = ctx.Dest.Slice(width) 
-      Source = next.Source }
+            struct(0, int v)
+    ctx.Dest <- ctx.Dest.Slice (skipy * width)
+    let origCtx = ctx
+    renderSSHPackets pakets &ctx 
+    ctx.Dest <- origCtx.Dest.Slice(width) 
 
-let rec renderSSHLines width count (ctx: Context inref) =
+let rec renderSSHLines width count (ctx: Context byref) =
     if count > 0 then
-        let ctx' = renderSSHLine width &ctx
-        renderSSHLines width (count-1) &ctx'
-    else
-        ctx
+        renderSSHLine width &ctx
+        renderSSHLines width (count-1) &ctx
 
-let renderSSH width (ctx: Context inref) =
-    let r = Context.readUInt16 &ctx
-    let lines = int r.Value
-    renderSSHLines width lines &r.Ctx
+let renderSSH width (ctx: Context byref) =
+    let lines = int (Context.readUInt16 &ctx)
+    renderSSHLines width lines &ctx
 
 
 let render (header: Header) initialView =
@@ -240,13 +216,14 @@ let render (header: Header) initialView =
         let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
         let chunkType = (cast s).[0].Type
         let s = s.Slice(sizeof<ChunkHeader>)
-        let ctx = { Source = s
-                    Dest = m.Span }
+        let mutable ctx = 
+            { Source = s
+              Dest = m.Span }
         let __ =
             match chunkType with
             | ChunkType.Rle -> renderLines (int header.Height) &ctx
             | ChunkType.Delta -> renderSSH (int header.Width) &ctx
-            | _ -> ctx
+            | _ -> ()
 
         current.Slice(frameSize)
             
