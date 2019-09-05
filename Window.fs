@@ -24,6 +24,7 @@ type Window<'t, 's
         this.Content.RootDirectory <- "Content"
         this.Window.AllowAltF4 <- true
         this.IsMouseVisible <- false
+        this.InactiveSleepTime <- TimeSpan.FromSeconds(1. / float fps)
         this.TargetElapsedTime <- targetElapsedTime
         
         base.Initialize()
