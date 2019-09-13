@@ -36,7 +36,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <Reference Include="C:\Development\MonoGame\MonoGame.Framework\bin\DesktopGL\Release\netstandard2.0\MonoGame.Framework.dll" />
+    <Reference Include="lib\MonoGame.Framework.dll" />
     <PackageReference Include="FSharp.Core" Version="4.7.0.0" />
   </ItemGroup>
 </Project>

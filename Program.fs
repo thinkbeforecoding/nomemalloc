@@ -294,7 +294,7 @@ let Main args =
         | _ ->
             let root = __SOURCE_DIRECTORY__
             //root + "/video/BBox.flh"
-            root + "/video/toaster.flh"
+            root + "/video/Toaster.flh"
             
     use file = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, null, 0L, MemoryMappedFiles.MemoryMappedFileAccess.Read)
     let accessor = file.CreateViewAccessor(0L,0L, MemoryMappedFileAccess.Read)
