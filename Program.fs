@@ -15,6 +15,8 @@ open Microsoft.Xna.Framework
 open System.Buffers.Binary
 open System.Runtime.CompilerServices
 open System.Diagnostics.Tracing
+open System.Buffers
+
 #nowarn "9"
 
 
@@ -33,48 +35,26 @@ type Header =
       Flags: uint16
       Speed: uint32 }
 
+type ViewMemoryManager<'t when 't: unmanaged>(accessor : MemoryMappedViewAccessor) =
+    inherit MemoryManager<'t>()
 
-[<Struct>]
-type ViewMemory<'t> = {
-        Handle: SafeBuffer
-        offset: int
-        length: int
-} with
-        member this.IsEmpty = this.length = 0
-        member this.Span() : 't ReadOnlySpan=
-                let p = NativePtr.ofNativeInt<byte> (this.Handle.DangerousGetHandle())
-                let start = NativePtr.add p this.offset
-                
-                new ReadOnlySpan<'t>(NativePtr.toVoidPtr start, this.length)
-        
-        member this.Slice(offset) : ViewMemory<'t> =
-                let newOffset = this.offset + offset
-                if offset < this.length then
-                    { Handle = this.Handle
-                      offset = newOffset
-                      length = this.length - offset }
-                else
-                    { Handle = this.Handle
-                      offset = this.offset + this.length
-                      length = 0 }
 
-        member this.Slice(offset, length) : ViewMemory<'t> =
-                let offset = min (this.offset + offset) this.length
-                let length = min (this.length - offset) length
-                { Handle = this.Handle
-                  offset = offset 
-                  length = length }
+    override this.Dispose(disposing) =
+        if disposing then
+            accessor.Dispose()
+
+    override this.GetSpan() = 
+        new Span<'t>(NativePtr.toVoidPtr<'t> (NativePtr.ofNativeInt<'t> (accessor.SafeMemoryMappedViewHandle.DangerousGetHandle())), int accessor.Capacity)
+
+
+    override this.Pin(index) = new MemoryHandle(NativePtr.toVoidPtr<'t> (NativePtr.ofNativeInt<'t> (accessor.SafeMemoryMappedViewHandle.DangerousGetHandle())))
+
+    override this.Unpin() = ()
+
                         
 type MemoryMappedViewAccessor with
-        member this.AsMemory<'t>(offset, length) =
-                { Handle = this.SafeMemoryMappedViewHandle
-                  offset = offset
-                  length = length //(int this.Capacity - offset)
-                } : ViewMemory<'t>
-        member this.AsMemory() =
-                this.AsMemory(0, int this.Capacity)
-        member this.AsMemory(offset) =
-                this.AsMemory(offset, int this.Capacity)
+        member this.MemoryOwner<'t>() = new ViewMemoryManager<'t>(this)
+            
 
 [<Struct>]
 type FrameHeader = {
@@ -110,11 +90,11 @@ module RefTuple =
 
 
 module Context =
-    open System.Runtime.Intrinsics.X86
     let copy size (ctx: Context inref) =
-        let source = (cast ctx.Source).Slice(0,size)
+        let pixSource : uint16 ReadOnlySpan = cast ctx.Source
+        let source = pixSource.Slice(0,size)
         source.CopyTo(ctx.Dest)
-        { Source = ctx.Source.Slice(size*2)
+        { Source = ctx.Source.Slice(size*sizeof<uint16>)
           Dest = ctx.Dest.Slice(size) }
 
     let fill size (ctx: Context inref) =
@@ -178,8 +158,6 @@ let rec renderLines height (ctx: Context inref) =
     else
         ctx
 
-// let inline renderBRUN height (ctx: Context inref) =
-//     renderLines height &ctx
 
 
 let renderSSHPacket (ctx: Context inref) =
@@ -228,17 +206,17 @@ let renderSSH width (ctx: Context inref) =
 
 
 let render (header: Header) initialView =
-    fun (view: byte ViewMemory) (time: GameTime) (m: Memory<uint16>) ->
+    fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
         let current =
             if view.IsEmpty then
                 initialView
             else
                 view
 
-        let s = current.Span()
-        let frameSize = (cast s : FrameHeader ReadOnlySpan).[0].Size
+        let s = current.Span
+        let frameSize = MemoryMarshal.Cast<_,FrameHeader>(s).[0].Size
         let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-        let chunkType = (cast s).[0].Type
+        let chunkType = (MemoryMarshal.Cast s).[0].Type
         let s = s.Slice(sizeof<ChunkHeader>)
         let ctx = { Source = s
                     Dest = m.Span }
@@ -298,15 +276,21 @@ let Main args =
             
     use file = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, null, 0L, MemoryMappedFiles.MemoryMappedFileAccess.Read)
     let accessor = file.CreateViewAccessor(0L,0L, MemoryMappedFileAccess.Read)
-    let header : Header = accessor.Read(0L)
-    let offset = accessor.Read<int>(80L)
-    let offset2 = accessor.Read<int>(84L)
-    let view1 = accessor.AsMemory<byte>(offset, int header.Size - offset)
-    let view2 = accessor.AsMemory<byte>(offset2, int header.Size - offset2)
+    use owner = accessor.MemoryOwner<byte>()
+    let memory = owner.Memory
+    let span  = Span.op_Implicit memory.Span 
+    let header : Header =  MemoryMarshal.Read(span)
+     
+    let offset = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(80))
+    let offset2 = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(84))
+    
+    let view1 = owner.Memory.Slice(offset, int header.Size - offset) |> Memory.op_Implicit
+
+    let view2 = owner.Memory.Slice(offset2, int header.Size - offset2) |> Memory.op_Implicit
     let render = render header view2
 
     use win = new Window<uint16,_>(int header.Width, int header.Height, SurfaceFormat.Bgr565, view1, render, 30)
-    //use listener = new EventListener()
+    use listener = new EventListener()
     GC.Collect()
     win.Run()
     0
