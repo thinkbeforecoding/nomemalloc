@@ -785,8 +785,8 @@ let Main args =
             p
         | _ ->
             let root = __SOURCE_DIRECTORY__
-            root + "/video/BBox.flh"
-            //root + "/video/Toaster.flh"
+            //root + "/video/BBox.flh"
+            root + "/video/Toaster.flh"
             
     use file = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, null, 0L, MemoryMappedFiles.MemoryMappedFileAccess.Read)
     let accessor = file.CreateViewAccessor(0L,0L, MemoryMappedFileAccess.Read)
@@ -804,9 +804,9 @@ let Main args =
     //let render = benchRender 100 10000 (Immutable.render header view2)
     //let render = benchRender 100 10000 (TwoIndices.render header view2)
     //let render = benchRender 100 10000 (Compact.render header view2)
-    //let render = Compact.render header view2
+    let render = Compact.render header view2
     //let render = benchRender 100 10000 (CompactMutable.render header view2)
-    let render = benchRender 100 10000 (Mutable.render header view2)
+    //let render = benchRender 100 10000 (Mutable.render header view2)
     //let render = Mutable.render header view2
 
     use win = new Window<Pixel,_>(int header.Width, int header.Height, SurfaceFormat.Bgr565, view1, render, 30)

@@ -5,7 +5,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <LangVersion>6.0</LangVersion>
   </PropertyGroup>
-  <!--<ItemGroup>
+  <ItemGroup>
     <Content Include="lib\x64\SDL2.dll">
       <Link>x64\SDL2.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -30,8 +30,8 @@
       <Link>x64\libSDL2-2.0.so.0</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-  </ItemGroup>-->
-  <ItemGroup>
+  </ItemGroup>
+  <!--<ItemGroup>
     <Content Include="..\MonoGame\Artifacts\MonoGame.Framework\DesktopGL\Release\netstandard2.0\x64\SDL2.dll">
       <Link>x64\SDL2.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -56,18 +56,18 @@
       <Link>x64\libSDL2-2.0.so.0</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-  </ItemGroup>
+  </ItemGroup>-->
 
-  <ItemGroup>
+  <!--<ItemGroup>
     <Reference Include="..\MonoGame\Artifacts\MonoGame.Framework\DesktopGL\Release\netstandard2.0\MonoGame.Framework.dll" />
-  </ItemGroup>
+  </ItemGroup>-->
   <ItemGroup>
     <!-- <MonoGameContentReference Include="**\*.mgcb" /> -->
     <Compile Include="Window.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <!--<Reference Include="lib\MonoGame.Framework.dll" />-->
+    <Reference Include="lib\MonoGame.Framework.dll" />
     <PackageReference Include="FSharp.Core" Version="6.0.1" />
     <!--<PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.0.1641" />-->
   </ItemGroup>
