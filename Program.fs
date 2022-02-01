@@ -1,10 +1,29 @@
-﻿#if INTERACTIVE
-#load ".paket/load/netcoreapp2.2/main.group.fsx"
-#load "Window.fs"
-#endif
+﻿open System
 
 
-open System
+
+
+
+
+//    _  _                                              _ _            
+//  _| || |_                                           | | |           
+// |_  __  _|_ __   ___  _ __ ___   ___ _ __ ___   __ _| | | ___   ___ 
+//  _| || |_| '_ \ / _ \| '_ ` _ \ / _ \ '_ ` _ \ / _` | | |/ _ \ / __|
+// |_  __  _| | | | (_) | | | | | |  __/ | | | | | (_| | | | (_) | (__ 
+//   |_||_| |_| |_|\___/|_| |_| |_|\___|_| |_| |_|\__,_|_|_|\___/ \___|
+
+
+let speaker = "Jérémie Chassaing"
+let company = "D-EDGE"
+
+
+let blog = Uri "https://thinkbeforecoding.com"
+let twitter = @"thinkb4coding"
+
+
+
+
+
 open System.IO.MemoryMappedFiles
 open System.IO
 open System.Runtime.InteropServices
@@ -83,7 +102,7 @@ type Context =
     { Source: Source
       Screen: Screen }
     
-module RenderWithContext = 
+module Immutable = 
     
     
     [<Struct; IsByRefLike>]
@@ -161,8 +180,6 @@ module RenderWithContext =
         if height > 0 then
             let ctx' = renderLine &ctx
             renderLines (height-1) &ctx'
-        else
-            ctx
 
 
 
@@ -202,41 +219,41 @@ module RenderWithContext =
         if count > 0 then
             let ctx' = renderSSHLine width &ctx
             renderSSHLines width (count-1) &ctx'
-        else
-            ctx
 
     let renderSSH width (ctx: Context inref) =
         let r = Context.readUInt16 &ctx
         let lines = int r.Value
         renderSSHLines width lines &r.Ctx
 
+    let renderFrame width height (source: ReadOnlySpan<byte>) (screen: Span<Pixel>) =
+        let frameSize = MemoryMarshal.AsRef<FrameHeader>(source).Size
+        let afterFrameHeader = source.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
+        let chunkType = MemoryMarshal.AsRef<ChunkHeader>(afterFrameHeader).Type
+        let bytes = afterFrameHeader.Slice(sizeof<ChunkHeader>)
+        let ctx = { Source = bytes
+                    Screen = screen }
+        match chunkType with
+        | ChunkType.Rle -> renderLines height &ctx
+        | ChunkType.Delta -> renderSSH width &ctx 
+        | _ -> ()
+
+        frameSize
 
     let render (header: Header) initialView =
-        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
+        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<Pixel>) ->
             let current =
                 if view.IsEmpty then
                     initialView
                 else
                     view
 
-            let s = current.Span
-            let frameSize = MemoryMarshal.AsRef<FrameHeader>(s).Size
-            let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-            let chunkType = MemoryMarshal.AsRef<ChunkHeader>(s).Type
-            let s = s.Slice(sizeof<ChunkHeader>)
-            let ctx = { Source = s
-                        Screen = m.Span }
-            let __ =
-                match chunkType with
-                | ChunkType.Rle -> renderLines (int header.Height) &ctx
-                | ChunkType.Delta -> renderSSH (int header.Width) &ctx
-                | _ -> ctx
+            let frameSize = renderFrame (int header.Width) (int header.Height) current.Span m.Span
 
             current.Slice(frameSize)
 
 
 
-module RenderWithoutContext = 
+module TwoIndices = 
 
     let inline copy (ctx: Context inref) size  (isrc: int) (iscreen: int) =
         let srcSlice = ctx.Source.Slice(isrc, size * sizeof<Pixel>)
@@ -271,10 +288,10 @@ module RenderWithoutContext =
        let packets = int ctx.Source[isrc]
        renderPackets &ctx packets (isrc+1) iscreen
 
-    let rec renderLines (ctx: Context inref) height  (isrc: int)  (iscreen : int) =
+    let rec renderLines height (ctx: Context inref) (isrc: int)  (iscreen : int) =
         if height > 0 then
             let struct(isrc', iscreen') = renderLine &ctx isrc iscreen
-            renderLines &ctx (height-1) isrc' iscreen'
+            renderLines (height-1) &ctx isrc' iscreen'
 
 
 
@@ -313,31 +330,35 @@ module RenderWithoutContext =
             let isrc' = renderSSHLine &ctx width isrc iscreen
             renderSSHLines &ctx width (count-1) isrc' (iscreen+width)
 
-    let renderSSH (ctx: Context inref) width (isrc: int) (iscreen : int) =
+    let renderSSH width (ctx: Context inref) (isrc: int) (iscreen : int) =
         let lines = int (BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(isrc)))
         renderSSHLines &ctx width lines (isrc+sizeof<uint16>) iscreen
 
 
+    let renderFrame width height (source: ReadOnlySpan<byte>) (screen: Span<Pixel>) =
+        let frameSize = MemoryMarshal.AsRef<FrameHeader>(source).Size
+        let afterFrameHeader = source.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
+        let chunkType = MemoryMarshal.AsRef<ChunkHeader>(afterFrameHeader).Type
+        let bytes = afterFrameHeader.Slice(sizeof<ChunkHeader>)
+        let ctx = { Source = bytes
+                    Screen = screen }
+        match chunkType with
+        | ChunkType.Rle -> renderLines height &ctx 0 0
+        | ChunkType.Delta -> renderSSH width &ctx 0 0
+        | _ -> ()
+
+        frameSize
+
 
     let render (header: Header) initialView =
-        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
+        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<Pixel>) ->
             let current =
                 if view.IsEmpty then
                     initialView
                 else
                     view
 
-            let s = current.Span
-            let frameSize = MemoryMarshal.AsRef<FrameHeader>(s).Size
-            let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-            let chunkType = MemoryMarshal.AsRef<ChunkHeader>(s).Type
-            let s = s.Slice(sizeof<ChunkHeader>)
-            let ctx = { Source = s
-                        Screen = m.Span }
-            match chunkType with
-            | ChunkType.Rle -> renderLines &ctx (int header.Height) 0 0
-            | ChunkType.Delta -> renderSSH &ctx (int header.Width) 0 0
-            | _ -> ()
+            let frameSize = renderFrame (int header.Width) (int header.Height) current.Span m.Span
 
             current.Slice(frameSize)
 
@@ -441,131 +462,33 @@ module Compact =
         let lines = int (BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(i.Source)))
         renderSSHLines lines width &ctx (i.AddSource sizeof<uint16>)
 
+    let renderFrame width height (source: ReadOnlySpan<byte>) (screen: Span<Pixel>) =
+        let frameSize = MemoryMarshal.AsRef<FrameHeader>(source).Size
+        let afterFrameHeader = source.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
+        let chunkType = MemoryMarshal.AsRef<ChunkHeader>(afterFrameHeader).Type
+        let bytes = afterFrameHeader.Slice(sizeof<ChunkHeader>)
+        let ctx = { Source = bytes
+                    Screen = screen }
+        match chunkType with
+        | ChunkType.Rle -> renderLines height &ctx Index.Zero 
+        | ChunkType.Delta -> renderSSH width &ctx Index.Zero 
+        | _ -> ()
+
+        frameSize
+
     let render (header: Header) initialView =
-        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
+        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<Pixel>) ->
             let current =
                 if view.IsEmpty then
                     initialView
                 else
                     view
 
-            let s = current.Span
-            let frameSize = MemoryMarshal.AsRef<FrameHeader>(s).Size
-            let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-            let chunkType = MemoryMarshal.AsRef<ChunkHeader>(s).Type
-            let s = s.Slice(sizeof<ChunkHeader>)
-            let ctx = { Source = s
-                        Screen = m.Span }
-            match chunkType with
-            | ChunkType.Rle -> renderLines (int header.Height) &ctx Index.Zero 
-            | ChunkType.Delta -> renderSSH (int header.Width) &ctx Index.Zero 
-            | _ -> ()
+            let frameSize = renderFrame (int header.Width) (int header.Height) current.Span m.Span
 
             current.Slice(frameSize)
 
-module Mutable =
-
-    let inline copy (ctx: Context inref)  (isrc: int byref) (iscreen: int byref) size  =
-        let srcSlice = ctx.Source.Slice(isrc, size * sizeof<Pixel>)
-        let screenSlice = ctx.Screen.Slice(iscreen, size)
-        (MemoryMarshal.Cast srcSlice).CopyTo(screenSlice)
-        isrc <- isrc + size * sizeof<Pixel>
-        iscreen <- iscreen + size
-
-
-    let inline fill (ctx: Context inref) (isrc: int byref) (iscreen: int byref) count =
-        let color = uint16 (BinaryPrimitives.ReadInt16LittleEndian (ctx.Source.Slice(isrc)))
-        let dest = ctx.Screen.Slice(iscreen, count)
-        dest.Fill(color)
-        isrc <- isrc + sizeof<Pixel>
-        iscreen <- iscreen + count
-
-    let renderPackets packets (ctx: Context inref) (isrc: int byref) (iscreen: int byref)  =
-        for i in 0 .. packets-1 do
-            let sizeCount = sbyte ctx.Source[isrc]
-            isrc <- isrc+1
-            if sizeCount < 0y then
-                let size = int (-sizeCount)
-                copy &ctx &isrc &iscreen size
-            else
-                let count = int sizeCount
-                fill &ctx &isrc &iscreen count
-
-
-    let renderLines height (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
-        for i in 0 .. height-1 do
-            let packets = int ctx.Source[isrc]
-            isrc <- isrc+1
-            renderPackets packets &ctx &isrc &iscreen
-
-
-    let renderSSHPackets (ctx: Context inref) (isrc: int byref) (iscreen: int byref) count =
-        for i in 0 .. count-1 do
-            let skipx = int ctx.Source[isrc]
-            let sizeCount = sbyte ctx.Source[isrc+1]
-            isrc <- isrc + 2
-            iscreen <- iscreen + skipx
-            if sizeCount >= 0y then
-                let size = int sizeCount
-                copy &ctx &isrc &iscreen size
-            else
-                let count = int -sizeCount
-                fill &ctx &isrc &iscreen count
-
-
-    let inline renderSSHLine width (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
-        let v = BinaryPrimitives.ReadInt16LittleEndian (ctx.Source.Slice(isrc))
-
-        if v &&& 0xC000s <> 0s then
-            let packetCount = BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(isrc+sizeof<int16>))
-            let packets = int packetCount
-            isrc <- isrc + sizeof<int16> + sizeof<uint16>
-            iscreen <- iscreen + int (-v) * width
-            renderSSHPackets &ctx &isrc &iscreen packets
-        else
-            let packets = int v
-            isrc <- isrc + sizeof<int16>
-            renderSSHPackets &ctx &isrc &iscreen packets 
-
-    let renderSSHLines count width (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
-        for i in 0 .. count-1 do
-            let nextiscreen = iscreen + width
-            renderSSHLine width &ctx &isrc &iscreen
-            iscreen <- nextiscreen
-
-    let inline renderSSH width (ctx: Context inref) (isrc: int byref) (iscreen: int byref)  =
-        let lines = int (BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(isrc)))
-        isrc <- isrc + sizeof<uint16>
-        renderSSHLines lines width &ctx &isrc &iscreen
-
-    let render (header: Header) initialView =
-        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
-            let current =
-                if view.IsEmpty then
-                    initialView
-                else
-                    view
-
-            let s = current.Span
-            let frameSize = MemoryMarshal.AsRef<FrameHeader>(s).Size
-            let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-            let chunkType = MemoryMarshal.AsRef<ChunkHeader>(s).Type
-            let s = s.Slice(sizeof<ChunkHeader>)
-            let ctx = { Source = s
-                        Screen = m.Span }
-            let mutable isrc = 0
-            let mutable iscreen = 0
-            
-            match chunkType with
-            | ChunkType.Rle -> 
-                let height = (int header.Height)
-                renderLines height &ctx &isrc &iscreen
-            | ChunkType.Delta -> renderSSH (int header.Width) &ctx &isrc &iscreen
-            | _ -> ()
-
-            current.Slice(frameSize)
-
-module CompactMut =
+module CompactMutable =
     [<Struct>]
     type Index(value: int64) =
         member _.Source = int value 
@@ -665,29 +588,138 @@ module CompactMut =
         let lines = int (BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(i.Source)))
         renderSSHLines lines width &ctx (i.AddSource sizeof<uint16>)
 
+    let renderFrame width height (source: ReadOnlySpan<byte>) (screen: Span<Pixel>) =
+        let frameSize = MemoryMarshal.AsRef<FrameHeader>(source).Size
+        let afterFrameHeader = source.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
+        let chunkType = MemoryMarshal.AsRef<ChunkHeader>(afterFrameHeader).Type
+        let bytes = afterFrameHeader.Slice(sizeof<ChunkHeader>)
+        let ctx = { Source = bytes
+                    Screen = screen }
+        match chunkType with
+        | ChunkType.Rle -> renderLines height &ctx Index.Zero 
+        | ChunkType.Delta -> renderSSH width &ctx Index.Zero 
+        | _ -> ()
+
+        frameSize
+
     let render (header: Header) initialView =
-        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<uint16>) ->
+        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<Pixel>) ->
             let current =
                 if view.IsEmpty then
                     initialView
                 else
                     view
 
-            let s = current.Span
-            let frameSize = MemoryMarshal.AsRef<FrameHeader>(s).Size
-            let s = s.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
-            let chunkType = MemoryMarshal.AsRef(s).Type
-            let s = s.Slice(sizeof<ChunkHeader>)
-            let ctx = { Source = s
-                        Screen = m.Span }
-            match chunkType with
-            | ChunkType.Rle -> renderLines (int header.Height) &ctx Index.Zero 
-            | ChunkType.Delta -> renderSSH (int header.Width) &ctx Index.Zero 
-            | _ -> ()
+            let frameSize = renderFrame (int header.Width) (int header.Height) current.Span m.Span
 
             current.Slice(frameSize)
 
 
+
+
+module Mutable =
+
+    let inline copy (ctx: Context inref)  (isrc: int byref) (iscreen: int byref) size  =
+        let srcSlice = ctx.Source.Slice(isrc, size * sizeof<Pixel>)
+        let screenSlice = ctx.Screen.Slice(iscreen, size)
+        (MemoryMarshal.Cast srcSlice).CopyTo(screenSlice)
+        isrc <- isrc + size * sizeof<Pixel>
+        iscreen <- iscreen + size
+
+
+    let inline fill (ctx: Context inref) (isrc: int byref) (iscreen: int byref) count =
+        let color = uint16 (BinaryPrimitives.ReadInt16LittleEndian (ctx.Source.Slice(isrc)))
+        let dest = ctx.Screen.Slice(iscreen, count)
+        dest.Fill(color)
+        isrc <- isrc + sizeof<Pixel>
+        iscreen <- iscreen + count
+
+    let renderPackets packets (ctx: Context inref) (isrc: int byref) (iscreen: int byref)  =
+        for i in 0 .. packets-1 do
+            let sizeCount = sbyte ctx.Source[isrc]
+            isrc <- isrc+1
+            if sizeCount < 0y then
+                let size = int (-sizeCount)
+                copy &ctx &isrc &iscreen size
+            else
+                let count = int sizeCount
+                fill &ctx &isrc &iscreen count
+
+
+    let renderLines height (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
+        for i in 0 .. height-1 do
+            let packets = int ctx.Source[isrc]
+            isrc <- isrc+1
+            renderPackets packets &ctx &isrc &iscreen
+
+
+    let renderSSHPackets (ctx: Context inref) (isrc: int byref) (iscreen: int byref) count =
+        for i in 0 .. count-1 do
+            let skipx = int ctx.Source[isrc]
+            let sizeCount = sbyte ctx.Source[isrc+1]
+            isrc <- isrc + 2
+            iscreen <- iscreen + skipx
+            if sizeCount >= 0y then
+                let size = int sizeCount
+                copy &ctx &isrc &iscreen size
+            else
+                let count = int -sizeCount
+                fill &ctx &isrc &iscreen count
+
+
+    let inline renderSSHLine width (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
+        let v = BinaryPrimitives.ReadInt16LittleEndian (ctx.Source.Slice(isrc))
+
+        if v &&& 0xC000s <> 0s then
+            let packetCount = BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(isrc+sizeof<int16>))
+            let packets = int packetCount
+            isrc <- isrc + sizeof<int16> + sizeof<uint16>
+            iscreen <- iscreen + int (-v) * width
+            renderSSHPackets &ctx &isrc &iscreen packets
+        else
+            let packets = int v
+            isrc <- isrc + sizeof<int16>
+            renderSSHPackets &ctx &isrc &iscreen packets 
+
+    let renderSSHLines count width (ctx: Context inref) (isrc: int byref) (iscreen: int byref) =
+        for i in 0 .. count-1 do
+            let nextiscreen = iscreen + width
+            renderSSHLine width &ctx &isrc &iscreen
+            iscreen <- nextiscreen
+
+    let inline renderSSH width (ctx: Context inref) (isrc: int byref) (iscreen: int byref)  =
+        let lines = int (BinaryPrimitives.ReadUInt16LittleEndian (ctx.Source.Slice(isrc)))
+        isrc <- isrc + sizeof<uint16>
+        renderSSHLines lines width &ctx &isrc &iscreen
+
+    let renderFrame width height (source: ReadOnlySpan<byte>) (screen: Span<Pixel>) =
+        let frameSize = MemoryMarshal.AsRef<FrameHeader>(source).Size
+        let afterFrameHeader = source.Slice(sizeof<FrameHeader>, frameSize - sizeof<FrameHeader>)
+        let chunkType = MemoryMarshal.AsRef<ChunkHeader>(afterFrameHeader).Type
+        let bytes = afterFrameHeader.Slice(sizeof<ChunkHeader>)
+        let ctx = { Source = bytes
+                    Screen = screen }
+        let mutable isrc = 0
+        let mutable iscreen = 0
+
+        match chunkType with
+        | ChunkType.Rle -> renderLines height &ctx &isrc &iscreen
+        | ChunkType.Delta -> renderSSH width &ctx &isrc &iscreen
+        | _ -> ()
+
+        frameSize
+
+    let render (header: Header) initialView =
+        fun (view: ReadOnlyMemory<byte>) (time: GameTime) (m: Memory<Pixel>) ->
+            let current =
+                if view.IsEmpty then
+                    initialView
+                else
+                    view
+
+            let frameSize = renderFrame (int header.Width) (int header.Height) current.Span m.Span
+
+            current.Slice(frameSize)
 
 let benchRender runs summary render =
     let mutable totalTime = 0L
@@ -753,8 +785,8 @@ let Main args =
             p
         | _ ->
             let root = __SOURCE_DIRECTORY__
-            //root + "/video/BBox.flh"
-            root + "/video/Toaster.flh"
+            root + "/video/BBox.flh"
+            //root + "/video/Toaster.flh"
             
     use file = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, null, 0L, MemoryMappedFiles.MemoryMappedFileAccess.Read)
     let accessor = file.CreateViewAccessor(0L,0L, MemoryMappedFileAccess.Read)
@@ -769,15 +801,15 @@ let Main args =
     let view1 = owner.Memory.Slice(offset, int header.Size - offset) |> Memory.op_Implicit
 
     let view2 = owner.Memory.Slice(offset2, int header.Size - offset2) |> Memory.op_Implicit
-    //let render = benchRender 100 1000 (render header view2)
-    //let render = RenderWithContext.render header view2
-    //let render = benchRender 100 10000 (RenderWithContext.render header view2)
-    //let render = benchRender 100 10000 (RenderWithoutContext.render header view2)
-    let render = benchRender 100 10000 (Compact.render header view2)
-    //let render = benchRender 100 10000 (Mutable.render header view2)
-    //let render = benchRender 100 10000 (CompactMut.render header view2)
+    //let render = benchRender 100 10000 (Immutable.render header view2)
+    //let render = benchRender 100 10000 (TwoIndices.render header view2)
+    //let render = benchRender 100 10000 (Compact.render header view2)
+    //let render = Compact.render header view2
+    //let render = benchRender 100 10000 (CompactMutable.render header view2)
+    let render = benchRender 100 10000 (Mutable.render header view2)
+    //let render = Mutable.render header view2
 
-    use win = new Window<uint16,_>(int header.Width, int header.Height, SurfaceFormat.Bgr565, view1, render, 30)
+    use win = new Window<Pixel,_>(int header.Width, int header.Height, SurfaceFormat.Bgr565, view1, render, 30)
     use listener = new EventListener()
     GC.Collect()
     win.Run()

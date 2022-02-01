@@ -1,13 +1,18 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 16
-VisualStudioVersion = 16.0.28803.452
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.32112.339
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "nomemalloc", "nomemalloc.fsproj", "{6283F0CB-A899-4F6D-AC52-A92CAF3FEECE}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".build", ".build", "{B31F35D3-F10A-472B-ADC5-19E8ED10FE06}"
 	ProjectSection(SolutionItems) = preProject
 		paket.dependencies = paket.dependencies
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Spec", "Spec", "{B4894322-8FFD-4B2F-89E8-7C226B14F8B3}"
+	ProjectSection(SolutionItems) = preProject
+		flic.txt = flic.txt
 	EndProjectSection
 EndProject
 Global
